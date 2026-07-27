@@ -8,6 +8,13 @@ interface AuthState {
   // calling updatePassword. While true, App renders the set-new-password screen
   // instead of the normal dashboard, even though a (recovery) session exists.
   passwordRecovery: boolean
+  // Set when the URL carries an auth error (e.g. #error=access_denied&error_code=
+  // otp_expired) instead of a session — most commonly a corporate email scanner
+  // prefetching the link and burning its one-time token before the user clicks
+  // it (see supabase.com/docs/guides/auth/redirect-urls). Without this, that
+  // case silently drops the user on the plain sign-in form with no explanation.
+  urlError: string | null
+  clearUrlError: () => void
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
   // Returns needsConfirmation: true when Supabase requires clicking an email link
   // before a session is granted (signUp() then returns no session, error: null).
@@ -31,6 +38,8 @@ export const useAuthStore = create<AuthState>(() => ({
   currentUserId: null,
   initialized: false,
   passwordRecovery: false,
+  urlError: null,
+  clearUrlError: () => useAuthStore.setState({ urlError: null }),
   signIn: async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     return { error: error?.message ?? null }
@@ -62,6 +71,28 @@ export const useAuthStore = create<AuthState>(() => ({
     await supabase.auth.signOut()
   },
 }))
+
+// Auth redirects (recovery, invite, signup confirmation) put their result in the
+// URL as either a hash (#error=...) or query string (?error=...) depending on
+// flow. supabase-js consumes a *successful* one via detectSessionInUrl and fires
+// onAuthStateChange below, but a failed one (invalid/expired/already-used token)
+// is left for the app to notice itself — so check for it directly, once, before
+// anything else runs, and strip it from the URL so a refresh doesn't re-show it.
+function checkUrlForAuthError(): string | null {
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  const queryParams = new URLSearchParams(window.location.search)
+  const description = hashParams.get('error_description') || queryParams.get('error_description')
+  const errorCode = hashParams.get('error_code') || queryParams.get('error_code')
+  if (!description && !errorCode) return null
+
+  window.history.replaceState(null, '', window.location.pathname)
+  return (description || errorCode || 'This link is invalid or has expired.').replace(/\+/g, ' ')
+}
+
+const initialUrlError = checkUrlForAuthError()
+if (initialUrlError) {
+  useAuthStore.setState({ urlError: initialUrlError })
+}
 
 // Fires immediately with the current session (INITIAL_SESSION) and again on every
 // sign-in/sign-out/recovery, so this single subscription covers initial load and

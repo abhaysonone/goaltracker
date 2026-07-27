@@ -150,6 +150,29 @@ auth verification manually inside the function (already done via
 explicitly. See [Authorization headers](https://supabase.com/docs/guides/functions/auth-headers)
 in the Edge Functions docs.
 
+### Recovery links landing back on the plain sign-in form
+
+If a recovery/invite email link lands the user back on the normal (signed-out)
+sign-in form instead of `SetNewPasswordPage`, the token was already dead by
+the time it was clicked — recovery tokens are single-use. Confirmed via
+`get_logs(service: "auth")`: multiple `/verify` attempts on the same link all
+returning `"One-time token not found"` / `"Email link is invalid or has
+expired"`, when a *different* domain's link worked first try. The most likely
+cause is a corporate email security scanner prefetching the link to scan it,
+silently burning the one-time token before the human ever clicks — an
+explicitly documented Supabase gotcha, not a bug in this app (see the "Email
+link validity" note on the [Redirect URLs](https://supabase.com/docs/guides/auth/redirect-urls)
+page).
+
+Since that failure mode used to fail *silently* (GoTrue redirects back with
+`#error=access_denied&error_code=otp_expired&error_description=...` instead
+of a session, and nothing was reading that), `authStore.ts` now checks the
+URL for this on load (`checkUrlForAuthError`) and surfaces it as a normal
+sign-in-form error instead of just quietly showing the plain form. It also
+strips the error params from the URL so refreshing doesn't re-show it. This
+doesn't fix an already-burned token — the user still needs a fresh link via
+"Forgot password?" — it just makes the failure visible instead of confusing.
+
 ## Seeding demo data
 
 ```bash

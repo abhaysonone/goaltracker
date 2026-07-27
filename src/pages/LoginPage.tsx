@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Award, Building2, Lock, Mail, User as UserIcon } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useDataStore } from '../store/dataStore'
@@ -19,6 +19,8 @@ export function LoginPage() {
   const signIn = useAuthStore((s) => s.signIn)
   const signUp = useAuthStore((s) => s.signUp)
   const requestPasswordReset = useAuthStore((s) => s.requestPasswordReset)
+  const urlError = useAuthStore((s) => s.urlError)
+  const clearUrlError = useAuthStore((s) => s.clearUrlError)
 
   const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin')
   const [name, setName] = useState('')
@@ -27,10 +29,16 @@ export function LoginPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [isNewCompany, setIsNewCompany] = useState(false)
   const [companyName, setCompanyName] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  // Seeded from a failed auth redirect (e.g. an expired/already-used recovery
+  // link — see authStore's checkUrlForAuthError), if there was one.
+  const [error, setError] = useState<string | null>(urlError)
   const [submitting, setSubmitting] = useState(false)
   const [confirmationSentTo, setConfirmationSentTo] = useState<string | null>(null)
   const [resetSentTo, setResetSentTo] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (urlError) clearUrlError()
+  }, [urlError, clearUrlError])
 
   const demoAdmins = users.filter((u) => u.role === 'admin')
   const demoEmployees = users.filter((u) => u.role === 'employee').slice(0, 4)
