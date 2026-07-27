@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { supabase } from '../lib/supabaseClient'
 import type {
   AssignmentStatus,
+  Company,
   Goal,
   GoalAssignment,
   GoalPriority,
@@ -41,6 +42,14 @@ function mapUser(row: Tables<'profiles'>): User {
     status: row.status,
     avatarColor: row.avatar_color,
     companyId: row.company_id,
+  }
+}
+
+function mapCompany(row: Tables<'companies'>): Company {
+  return {
+    id: row.id,
+    name: row.name,
+    domain: row.domain,
   }
 }
 
@@ -110,6 +119,9 @@ function companyIdOf(users: User[], userId: string): string {
 }
 
 interface DataState {
+  // The signed-in user's own company only — RLS (companies_select_own) never
+  // returns any other company's row, so there's nothing to scope this by.
+  company: Company | null
   users: User[]
   goals: Goal[]
   assignments: GoalAssignment[]
@@ -166,6 +178,7 @@ interface DataState {
 }
 
 export const useDataStore = create<DataState>((set, get) => ({
+  company: null,
   users: [],
   goals: [],
   assignments: [],
@@ -174,17 +187,19 @@ export const useDataStore = create<DataState>((set, get) => ({
   loaded: false,
 
   fetchAll: async () => {
-    const [profilesRes, goalsRes, assignmentsRes, progressRes, notificationsRes] = await Promise.all([
+    const [companiesRes, profilesRes, goalsRes, assignmentsRes, progressRes, notificationsRes] = await Promise.all([
+      supabase.from('companies').select('*'),
       supabase.from('profiles').select('*'),
       supabase.from('goals').select('*').order('created_at', { ascending: false }),
       supabase.from('goal_assignments').select('*'),
       supabase.from('progress_updates').select('*').order('created_at', { ascending: false }),
       supabase.from('notifications').select('*').order('created_at', { ascending: false }),
     ])
-    for (const res of [profilesRes, goalsRes, assignmentsRes, progressRes, notificationsRes]) {
+    for (const res of [companiesRes, profilesRes, goalsRes, assignmentsRes, progressRes, notificationsRes]) {
       if (res.error) throw res.error
     }
     set({
+      company: companiesRes.data?.[0] ? mapCompany(companiesRes.data[0]) : null,
       users: (profilesRes.data ?? []).map(mapUser),
       goals: (goalsRes.data ?? []).map(mapGoal),
       assignments: (assignmentsRes.data ?? []).map(mapAssignment),
@@ -195,7 +210,15 @@ export const useDataStore = create<DataState>((set, get) => ({
   },
 
   reset: () => {
-    set({ users: [], goals: [], assignments: [], progressUpdates: [], notifications: [], loaded: false })
+    set({
+      company: null,
+      users: [],
+      goals: [],
+      assignments: [],
+      progressUpdates: [],
+      notifications: [],
+      loaded: false,
+    })
   },
 
   createGoal: async (goal) => {

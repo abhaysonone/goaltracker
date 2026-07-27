@@ -12,6 +12,7 @@ import { formatDate, STATUS_META } from '../../lib/format'
 export function EmployeeDashboard() {
   const currentUserId = useAuthStore((s) => s.currentUserId)!
   const user = useDataStore((s) => s.users.find((u) => u.id === currentUserId))!
+  const company = useDataStore((s) => s.company)
   const goals = useDataStore((s) => s.goals)
   const allAssignments = useDataStore((s) => s.assignments)
   const assignments = useMemo(
@@ -45,6 +46,9 @@ export function EmployeeDashboard() {
   return (
     <div className="space-y-6">
       <div>
+        {company && (
+          <p className="text-xs font-medium uppercase tracking-wide text-text-muted">{company.name}</p>
+        )}
         <h1 className="text-xl font-semibold text-text-primary">Welcome back, {user.name.split(' ')[0]}</h1>
         <p className="mt-0.5 text-sm text-text-secondary">Here&apos;s where your goals stand today</p>
       </div>

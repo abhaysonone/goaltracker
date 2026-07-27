@@ -28,6 +28,7 @@ const STATUS_COLORS: Record<AssignmentStatus, string> = {
 }
 
 export function AdminDashboard() {
+  const company = useDataStore((s) => s.company)
   const assignments = useDataStore((s) => s.assignments)
   const goals = useDataStore((s) => s.goals)
   const users = useDataStore((s) => s.users)
@@ -89,6 +90,9 @@ export function AdminDashboard() {
   return (
     <div className="space-y-6">
       <div>
+        {company && (
+          <p className="text-xs font-medium uppercase tracking-wide text-text-muted">{company.name}</p>
+        )}
         <h1 className="text-xl font-semibold text-text-primary">Dashboard</h1>
         <p className="mt-0.5 text-sm text-text-secondary">Organization-wide goal &amp; certification progress</p>
       </div>
