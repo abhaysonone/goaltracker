@@ -11,6 +11,13 @@ export interface User {
   managerId: string | null
   status: UserStatus
   avatarColor: string
+  companyId: string
+}
+
+export interface Company {
+  id: string
+  name: string
+  domain: string
 }
 
 export type GoalType = 'training' | 'certification'

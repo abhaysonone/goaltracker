@@ -30,7 +30,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: callerProfile, error: callerProfileError } = await admin
       .from('profiles')
-      .select('role')
+      .select('role, company_id')
       .eq('id', caller.id)
       .single()
     if (callerProfileError || callerProfile?.role !== 'admin') {
@@ -43,10 +43,15 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ error: 'Missing required fields' }), { status: 400 })
     }
 
+    // invited_company_id goes in app_metadata, not user_metadata: only the Admin API
+    // (this service-role client) can set app_metadata, so handle_new_user's trigger
+    // can trust it — a public signUp() call can never forge its way into a company
+    // this way, since it can only ever set user_metadata.
     const { data: created, error: createError } = await admin.auth.admin.createUser({
       email,
       email_confirm: true,
       user_metadata: { name },
+      app_metadata: { invited_company_id: callerProfile.company_id },
     })
     if (createError || !created.user) {
       return new Response(JSON.stringify({ error: createError?.message ?? 'Failed to create user' }), {
@@ -55,7 +60,8 @@ Deno.serve(async (req: Request) => {
     }
 
     // The on_auth_user_created trigger already inserted a bare profiles row (default
-    // role 'employee', department 'Unassigned') — fill in the rest that HR specified.
+    // role 'employee', company_id from invited_company_id above) — fill in the rest
+    // that HR specified.
     const { error: updateError } = await admin
       .from('profiles')
       .update({

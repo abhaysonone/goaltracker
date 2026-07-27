@@ -7,7 +7,15 @@ interface AuthState {
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
   // Returns needsConfirmation: true when Supabase requires clicking an email link
   // before a session is granted (signUp() then returns no session, error: null).
-  signUp: (email: string, password: string, name: string) => Promise<{ error: string | null; needsConfirmation: boolean }>
+  // Pass companyName to found a new company (email domain becomes that company's
+  // domain); omit it to join whatever company is already registered for that
+  // domain — the handle_new_user trigger enforces both, this just picks the branch.
+  signUp: (
+    email: string,
+    password: string,
+    name: string,
+    companyName?: string,
+  ) => Promise<{ error: string | null; needsConfirmation: boolean }>
   logout: () => Promise<void>
 }
 
@@ -18,12 +26,12 @@ export const useAuthStore = create<AuthState>(() => ({
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     return { error: error?.message ?? null }
   },
-  signUp: async (email, password, name) => {
+  signUp: async (email, password, name, companyName) => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { name },
+        data: { name, ...(companyName && { company_name: companyName }) },
         emailRedirectTo: window.location.origin,
       },
     })

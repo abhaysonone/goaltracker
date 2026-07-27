@@ -91,28 +91,45 @@ const seedProgressUpdates = [
   { assignmentId: 'a-14', updatedBy: 'u-oliver', status: 'in_progress', completionPct: 85, note: 'Two modules remaining, on track to finish before due date.', evidenceUrl: null },
 ]
 
-async function findOrCreateAuthUser(email, name) {
+async function findOrCreateAuthUser(email, name, companyId) {
   const { data, error } = await admin.auth.admin.listUsers({ perPage: 200 })
   if (error) throw error
   const existing = data.users.find((u) => u.email === email)
   if (existing) return existing.id
 
+  // invited_company_id in app_metadata is the same trusted channel the
+  // admin-create-employee edge function uses — handle_new_user only accepts it
+  // from here (service_role), never from a public signUp() call.
   const { data: created, error: createError } = await admin.auth.admin.createUser({
     email,
     password: DEMO_PASSWORD,
     email_confirm: true,
     user_metadata: { name },
+    app_metadata: { invited_company_id: companyId },
   })
   if (createError) throw createError
   return created.user.id
 }
 
+async function findOrCreateCompany(name, domain) {
+  const { data: existing } = await admin.from('companies').select('id').eq('domain', domain).maybeSingle()
+  if (existing) return existing.id
+  const { data: created, error } = await admin.from('companies').insert({ name, domain }).select('id').single()
+  if (error) throw error
+  return created.id
+}
+
 async function main() {
+  console.log('Seeding company...')
+  const companyId = await findOrCreateCompany('Kyyba', 'kyyba.com')
+
   console.log('Seeding users...')
   const idMap = {}
   for (const u of seedUsers) {
-    idMap[u.id] = await findOrCreateAuthUser(u.email, u.name)
+    idMap[u.id] = await findOrCreateAuthUser(u.email, u.name, companyId)
   }
+
+  await admin.from('companies').update({ created_by: idMap['u-priya'] }).eq('id', companyId).is('created_by', null)
 
   console.log('Filling in profile fields...')
   for (const u of seedUsers) {

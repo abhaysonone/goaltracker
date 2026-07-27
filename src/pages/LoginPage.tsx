@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Award, Lock, Mail, User as UserIcon } from 'lucide-react'
+import { Award, Building2, Lock, Mail, User as UserIcon } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useDataStore } from '../store/dataStore'
 import { Button } from '../components/ui/Button'
@@ -24,6 +24,8 @@ export function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
+  const [isNewCompany, setIsNewCompany] = useState(false)
+  const [companyName, setCompanyName] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [confirmationSentTo, setConfirmationSentTo] = useState<string | null>(null)
@@ -37,6 +39,8 @@ export function LoginPage() {
     setConfirmationSentTo(null)
     setPassword('')
     setConfirmPassword('')
+    setIsNewCompany(false)
+    setCompanyName('')
   }
 
   async function handleSignIn(signInEmail: string, signInPassword: string) {
@@ -50,13 +54,19 @@ export function LoginPage() {
   async function handleSignUp() {
     setError(null)
     if (!name.trim()) return setError('Enter your full name.')
+    if (isNewCompany && !companyName.trim()) return setError('Enter your company name.')
     if (password.length < MIN_PASSWORD_LENGTH) {
       return setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
     }
     if (password !== confirmPassword) return setError('Passwords do not match.')
 
     setSubmitting(true)
-    const { error: signUpError, needsConfirmation } = await signUp(email, password, name.trim())
+    const { error: signUpError, needsConfirmation } = await signUp(
+      email,
+      password,
+      name.trim(),
+      isNewCompany ? companyName.trim() : undefined,
+    )
     setSubmitting(false)
     if (signUpError) return setError(signUpError)
     if (needsConfirmation) {
@@ -119,6 +129,43 @@ export function LoginPage() {
                     </div>
                   </div>
                 )}
+                {mode === 'signup' && (
+                  <div className="space-y-2">
+                    <label className="flex items-center gap-2 text-xs text-text-secondary">
+                      <input
+                        type="checkbox"
+                        checked={isNewCompany}
+                        onChange={(e) => setIsNewCompany(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-border/30"
+                      />
+                      I&apos;m setting up a new company
+                    </label>
+                    {!isNewCompany && (
+                      <p className="text-xs text-text-muted">
+                        Your email&apos;s domain must already be registered by your company&apos;s admin.
+                      </p>
+                    )}
+                    {isNewCompany && (
+                      <div>
+                        <Label htmlFor="company-name">Company name</Label>
+                        <div className="relative">
+                          <Building2 size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                          <Input
+                            id="company-name"
+                            placeholder="Acme Corp"
+                            className="pl-9"
+                            value={companyName}
+                            onChange={(e) => setCompanyName(e.target.value)}
+                          />
+                        </div>
+                        <p className="mt-1 text-xs text-text-muted">
+                          You&apos;ll be the admin. Your email&apos;s domain becomes the one other employees
+                          use to join.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div>
                   <Label htmlFor="email">Work email</Label>
                   <div className="relative">
@@ -179,7 +226,7 @@ export function LoginPage() {
                     submitting ||
                     !email ||
                     !password ||
-                    (mode === 'signup' && (!name || !confirmPassword))
+                    (mode === 'signup' && (!name || !confirmPassword || (isNewCompany && !companyName)))
                   }
                 >
                   {mode === 'signin' ? 'Sign in' : 'Create account'}

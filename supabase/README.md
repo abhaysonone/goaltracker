@@ -18,9 +18,52 @@ these filenames.
 | `20260727002513_lock_down_trigger_function_execute.sql` | Security-advisor fix: revoke public `EXECUTE` on the two `SECURITY DEFINER` trigger functions |
 | `20260727002619_revoke_trigger_function_execute_grants.sql` | Same fix, covering the `anon`/`authenticated` default-privilege grants the first pass missed |
 | `20260727002723_fkey_covering_indexes.sql` | Performance-advisor fix: covering indexes for two previously unindexed foreign keys |
+| `20260727014950_add_companies_and_company_scoping.sql` | Multi-tenancy: `companies` table, `company_id` on every other table (server-derived via `BEFORE INSERT` triggers, never client-supplied), `private.current_company_id()` helper |
+| `20260727015001_company_id_not_null.sql` | Enforces `company_id` `NOT NULL` everywhere once the triggers above are in place |
+| `20260727015014_handle_new_user_multi_tenant.sql` | Rewrites the signup trigger with the three-case company resolution described below |
+| `20260727015035_company_scoped_rls_policies.sql` | Every policy (profiles/goals/goal_assignments/progress_updates/notifications/storage) now also requires `company_id = private.current_company_id()` |
 
 Ran `get_advisors` (security + performance) after applying everything —
 clean except for expected "unused index" info notices on empty tables.
+
+## Multi-tenancy
+
+Every company's data is isolated at the database level, not just filtered in
+the UI. `companies` holds one row per registered company (`name`, unique
+`domain`); every other table has a `company_id` column that RLS checks
+against `private.current_company_id()` (the caller's own `profiles.company_id`,
+resolved via the same recursion-safe `SECURITY DEFINER` pattern as
+`private.is_admin()`). `company_id` is **never accepted from the client** —
+`BEFORE INSERT` triggers derive it from context (a goal's `company_id` comes
+from its creator's profile; an assignment's from its goal, while also
+rejecting the insert if the goal/employee/assigner aren't all in the same
+company; etc.), so there's no way to write a cross-company row even by
+directly crafting a Supabase client call.
+
+`handle_new_user` decides which company a new signup belongs to, in this
+priority order:
+
+1. **`raw_app_meta_data.invited_company_id`** — set only by the
+   `admin-create-employee` edge function via the service_role Admin API. A
+   public `signUp()` call can only ever set `user_metadata`, never
+   `app_metadata`, so a self-registering user cannot forge this to jump into
+   an arbitrary company. Used when an admin adds an employee directly.
+2. **`raw_user_meta_data.company_name`** (client-supplied via the signup
+   form's "I'm setting up a new company" checkbox) — registers a *new*
+   company. The domain is derived from the signer's own email
+   (`split_part(email, '@', 2)`), never manually typed, so nobody can claim a
+   domain by just typing it in. The signer becomes that company's `admin`.
+   Fails (rolling back the whole signup) if the domain is already registered.
+3. **Otherwise** — regular employee signup. Looks up an existing company
+   whose `domain` matches the signer's email domain and joins it as
+   `employee`. Fails (rolling back the whole signup, no orphaned auth user)
+   if no company is registered for that domain yet.
+
+Verified live (see conversation/commit history): founding-admin signup
+creates the company + admin profile correctly; a second signup on the same
+domain joins that company as an employee; a signup on an unregistered domain
+is rejected and rolls back cleanly with no orphaned `auth.users` row; two
+different companies' data doesn't cross-contaminate `profiles`.
 
 ## Frontend integration
 
@@ -47,14 +90,20 @@ projects, confirmation is required by default — sends a confirmation email
 and returns no session until the user clicks the link. The UI reflects this:
 it shows a "check your email" screen instead of trying to log the user in
 immediately. `handle_new_user` still fires as soon as the (unconfirmed)
-`auth.users` row is created, so the `profiles` row exists right away, always
-with the safe defaults `role = 'employee'`, `department = 'Unassigned'` —
-signup input is never trusted for authorization, matching the existing
-admin-only `profiles.role`/`department` RLS policy.
+`auth.users` row is created, so the `profiles` row exists right away — role
+is always either the safe default `employee` (joining an existing company)
+or `admin` (only when founding a brand new one, see Multi-tenancy below),
+never something the signup payload gets to claim directly. `department`
+defaults to `Unassigned` either way.
 
-This is intentionally open: anyone with any email address can self-register
-as an employee. There's no domain allowlist. Add one (e.g. reject emails not
-ending in your company domain) if that's not what you want.
+Signup is domain-gated per the multi-tenancy section above: self-registering
+as a plain employee only works if some admin has already founded a company
+for that email domain.
+
+Note: Supabase's own email sending has a rate limit (hit this a few times
+while testing — "email rate limit exceeded"). It fails the whole signup
+atomically when that happens (no orphaned user), so it's safe, just
+occasionally slow to test against repeatedly.
 
 Two things need verifying in the dashboard that no MCP tool here can check
 or set:
@@ -77,19 +126,17 @@ npm run db:seed
 
 `scripts/seed.mjs` needs `SUPABASE_SERVICE_ROLE_KEY` (Project Settings -> API
 -> service_role) to create real Auth users via the Admin API — this key never
-goes in frontend code and stays script-only. It creates the same 11 demo
-users / 10 goals / 22 assignments / 9 progress-update rows the old mock store
-shipped with, all sharing the password `Demo-Password-123!` (override via
-`SEED_DEMO_PASSWORD`). Safe to re-run — it looks up existing users/goals/
-assignments by natural key before inserting.
+goes in frontend code and stays script-only. It creates one "Kyyba" company
+(domain `kyyba.com`) plus the same 11 demo users / 10 goals / 22 assignments
+/ 9 progress-update rows the old mock store shipped with, all sharing the
+password `Demo-Password-123!` (override via `SEED_DEMO_PASSWORD`) and all
+assigned to that company via `invited_company_id` (the same trusted
+`app_metadata` channel `admin-create-employee` uses). Safe to re-run — it
+looks up the existing company/users/goals/assignments by natural key before
+inserting.
 
 ## What's not done yet
 
-- **Bootstrapping the first admin.** Every signup defaults to `role =
-  'employee'` (RLS only lets admins change `profiles.role`), so the very
-  first admin has to be flipped manually via SQL — the seed script handles
-  this for the demo users, but a fresh non-seeded project needs it done by
-  hand once.
 - **Evidence file upload.** Nothing in the UI calls the
   `certification-evidence` storage bucket yet — `EmployeeGoals.tsx`'s file
   picker only stores a filename string, it doesn't actually upload.

@@ -40,6 +40,7 @@ function mapUser(row: Tables<'profiles'>): User {
     managerId: row.manager_id,
     status: row.status,
     avatarColor: row.avatar_color,
+    companyId: row.company_id,
   }
 }
 
@@ -97,6 +98,17 @@ function mapNotification(row: Tables<'notifications'>): Notification {
   }
 }
 
+// company_id is NOT NULL with no default — the insert triggers always overwrite it
+// with the server-derived value regardless, but the client still has to send
+// *something* to satisfy the column. Send the real value we already have locally
+// so a lookup miss surfaces immediately as an error rather than silently relying on
+// the trigger to paper over a bad id.
+function companyIdOf(users: User[], userId: string): string {
+  const companyId = users.find((u) => u.id === userId)?.companyId
+  if (!companyId) throw new Error(`No company_id found for user ${userId}`)
+  return companyId
+}
+
 interface DataState {
   users: User[]
   goals: Goal[]
@@ -132,8 +144,10 @@ interface DataState {
   ) => Promise<void>
 
   // Employees (Admin)
-  addEmployee: (user: Omit<User, 'id' | 'status'>) => Promise<void>
-  updateEmployee: (id: string, patch: Partial<Omit<User, 'id'>>) => Promise<void>
+  // company_id is never client-supplied: new hires join the calling admin's own
+  // company server-side (see admin-create-employee), and it's not reassignable after.
+  addEmployee: (user: Omit<User, 'id' | 'status' | 'companyId'>) => Promise<void>
+  updateEmployee: (id: string, patch: Partial<Omit<User, 'id' | 'companyId'>>) => Promise<void>
   toggleEmployeeStatus: (id: string) => Promise<void>
 
   // Progress (Employee)
@@ -192,6 +206,7 @@ export const useDataStore = create<DataState>((set, get) => ({
       category: goal.category,
       created_by: goal.createdBy,
       evidence_type: goal.evidenceType,
+      company_id: companyIdOf(get().users, goal.createdBy),
     })
     if (error) throw error
     await get().fetchAll()
@@ -220,6 +235,7 @@ export const useDataStore = create<DataState>((set, get) => ({
   },
 
   assignGoal: async ({ goalId, employeeIds, assignedBy, dueDate, priority }) => {
+    const companyId = companyIdOf(get().users, assignedBy)
     const { error } = await supabase.from('goal_assignments').insert(
       employeeIds.map((employeeId) => ({
         goal_id: goalId,
@@ -227,6 +243,7 @@ export const useDataStore = create<DataState>((set, get) => ({
         assigned_by: assignedBy,
         due_date: dueDate,
         priority,
+        company_id: companyId,
       })),
     )
     if (error) throw error
@@ -246,6 +263,7 @@ export const useDataStore = create<DataState>((set, get) => ({
       note: 'Status manually overridden by admin.',
       is_override: true,
       override_reason: reason,
+      company_id: companyIdOf(get().users, updatedBy),
     })
     if (error) throw error
     await get().fetchAll()
@@ -305,6 +323,7 @@ export const useDataStore = create<DataState>((set, get) => ({
       completion_pct: completionPct,
       note,
       evidence_url: evidenceUrl,
+      company_id: companyIdOf(get().users, updatedBy),
     })
     if (error) throw error
     await get().fetchAll()

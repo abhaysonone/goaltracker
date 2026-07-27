@@ -14,10 +14,43 @@ export type Database = {
   }
   public: {
     Tables: {
+      companies: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          domain: string
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          domain: string
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          domain?: string
+          id?: string
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "companies_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       goal_assignments: {
         Row: {
           assigned_at: string
           assigned_by: string
+          company_id: string
           completion_pct: number
           due_date: string
           employee_id: string
@@ -29,6 +62,7 @@ export type Database = {
         Insert: {
           assigned_at?: string
           assigned_by: string
+          company_id: string
           completion_pct?: number
           due_date: string
           employee_id: string
@@ -40,6 +74,7 @@ export type Database = {
         Update: {
           assigned_at?: string
           assigned_by?: string
+          company_id?: string
           completion_pct?: number
           due_date?: string
           employee_id?: string
@@ -54,6 +89,13 @@ export type Database = {
             columns: ["assigned_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "goal_assignments_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
             referencedColumns: ["id"]
           },
           {
@@ -76,6 +118,7 @@ export type Database = {
         Row: {
           archived: boolean
           category: string
+          company_id: string
           created_at: string
           created_by: string
           description: string
@@ -87,6 +130,7 @@ export type Database = {
         Insert: {
           archived?: boolean
           category: string
+          company_id: string
           created_at?: string
           created_by: string
           description?: string
@@ -98,6 +142,7 @@ export type Database = {
         Update: {
           archived?: boolean
           category?: string
+          company_id?: string
           created_at?: string
           created_by?: string
           description?: string
@@ -107,6 +152,13 @@ export type Database = {
           type?: Database["public"]["Enums"]["goal_type"]
         }
         Relationships: [
+          {
+            foreignKeyName: "goals_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "goals_created_by_fkey"
             columns: ["created_by"]
@@ -118,6 +170,7 @@ export type Database = {
       }
       notifications: {
         Row: {
+          company_id: string
           created_at: string
           id: string
           message: string
@@ -126,6 +179,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          company_id: string
           created_at?: string
           id?: string
           message: string
@@ -134,6 +188,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          company_id?: string
           created_at?: string
           id?: string
           message?: string
@@ -142,6 +197,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "notifications_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "notifications_user_id_fkey"
             columns: ["user_id"]
@@ -154,6 +216,7 @@ export type Database = {
       profiles: {
         Row: {
           avatar_color: string
+          company_id: string
           created_at: string
           department: string
           email: string
@@ -165,6 +228,7 @@ export type Database = {
         }
         Insert: {
           avatar_color?: string
+          company_id: string
           created_at?: string
           department?: string
           email: string
@@ -176,6 +240,7 @@ export type Database = {
         }
         Update: {
           avatar_color?: string
+          company_id?: string
           created_at?: string
           department?: string
           email?: string
@@ -186,6 +251,13 @@ export type Database = {
           status?: Database["public"]["Enums"]["user_status"]
         }
         Relationships: [
+          {
+            foreignKeyName: "profiles_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "profiles_manager_id_fkey"
             columns: ["manager_id"]
@@ -198,6 +270,7 @@ export type Database = {
       progress_updates: {
         Row: {
           assignment_id: string
+          company_id: string
           completion_pct: number
           created_at: string
           evidence_url: string | null
@@ -210,6 +283,7 @@ export type Database = {
         }
         Insert: {
           assignment_id: string
+          company_id: string
           completion_pct: number
           created_at?: string
           evidence_url?: string | null
@@ -222,6 +296,7 @@ export type Database = {
         }
         Update: {
           assignment_id?: string
+          company_id?: string
           completion_pct?: number
           created_at?: string
           evidence_url?: string | null
@@ -238,6 +313,13 @@ export type Database = {
             columns: ["assignment_id"]
             isOneToOne: false
             referencedRelation: "goal_assignments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "progress_updates_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
             referencedColumns: ["id"]
           },
           {
