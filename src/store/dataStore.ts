@@ -281,6 +281,7 @@ export const useDataStore = create<DataState>((set, get) => ({
         department: user.department,
         managerId: user.managerId,
         avatarColor: user.avatarColor,
+        redirectTo: window.location.origin,
       },
     })
     if (error) throw error

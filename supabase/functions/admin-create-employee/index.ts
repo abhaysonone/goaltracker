@@ -1,14 +1,35 @@
 // Creates a login-capable employee account. Runs server-side because it needs the
 // service_role key (Admin API) to create an auth.users row — something the browser
-// client must never hold. Verifies the caller is signed in (platform-enforced via
-// verify_jwt) AND is an admin (checked here against profiles.role) before doing anything.
+// client must never hold.
+//
+// Deployed with verify_jwt=false: the platform-level verify_jwt check rejects the
+// browser's CORS preflight (OPTIONS, no Authorization header) with 401 before this
+// code ever runs, which blocks the real POST from being sent at all. So auth is
+// verified manually below instead (callerClient.auth.getUser()), and CORS/OPTIONS
+// are handled explicitly.
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
+}
+
 Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
   try {
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing authorization' }), { status: 401 })
+      return json({ error: 'Missing authorization' }, 401)
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
@@ -23,7 +44,7 @@ Deno.serve(async (req: Request) => {
       error: callerError,
     } = await callerClient.auth.getUser()
     if (callerError || !caller) {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
+      return json({ error: 'Unauthorized' }, 401)
     }
 
     const admin = createClient(supabaseUrl, serviceRoleKey)
@@ -34,13 +55,13 @@ Deno.serve(async (req: Request) => {
       .eq('id', caller.id)
       .single()
     if (callerProfileError || callerProfile?.role !== 'admin') {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 })
+      return json({ error: 'Forbidden' }, 403)
     }
 
     const body = await req.json()
-    const { name, email, role, department, managerId, avatarColor } = body ?? {}
+    const { name, email, role, department, managerId, avatarColor, redirectTo } = body ?? {}
     if (!name || !email || !department) {
-      return new Response(JSON.stringify({ error: 'Missing required fields' }), { status: 400 })
+      return json({ error: 'Missing required fields' }, 400)
     }
 
     // invited_company_id goes in app_metadata, not user_metadata: only the Admin API
@@ -54,9 +75,7 @@ Deno.serve(async (req: Request) => {
       app_metadata: { invited_company_id: callerProfile.company_id },
     })
     if (createError || !created.user) {
-      return new Response(JSON.stringify({ error: createError?.message ?? 'Failed to create user' }), {
-        status: 400,
-      })
+      return json({ error: createError?.message ?? 'Failed to create user' }, 400)
     }
 
     // The on_auth_user_created trigger already inserted a bare profiles row (default
@@ -72,13 +91,25 @@ Deno.serve(async (req: Request) => {
       })
       .eq('id', created.user.id)
     if (updateError) {
-      return new Response(JSON.stringify({ error: updateError.message }), { status: 400 })
+      return json({ error: updateError.message }, 400)
     }
 
-    return new Response(JSON.stringify({ id: created.user.id }), {
-      headers: { 'Content-Type': 'application/json' },
+    // createUser above sets no password — this is the account's only way in.
+    // Uses the same public resetPasswordForEmail flow as the login page's own
+    // "Forgot password?", which works regardless of whether a password was ever
+    // set, so it doubles as this account's initial password-setup link.
+    const anon = createClient(supabaseUrl, anonKey)
+    const { error: resetError } = await anon.auth.resetPasswordForEmail(email, {
+      redirectTo: redirectTo || supabaseUrl,
     })
+    if (resetError) {
+      // Account exists and is usable once emailed manually; don't fail the whole
+      // request over the notification step.
+      console.error('Failed to send password-setup email:', resetError.message)
+    }
+
+    return json({ id: created.user.id })
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500 })
+    return json({ error: String(err) }, 500)
   }
 })

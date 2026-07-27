@@ -117,6 +117,39 @@ or set:
   `window.location.origin`, but Supabase will only honor it if that origin is
   on the allowlist.
 
+## Password recovery / admin-created employee passwords
+
+`admin-create-employee` creates the auth user via the Admin API with no
+password at all — there's no field for one in the UI, and there shouldn't
+be (an admin choosing a new hire's password would mean the admin knows it).
+Instead, right after creating the account it calls the same public
+`supabase.auth.resetPasswordForEmail()` the login page's "Forgot password?"
+uses, which works fine on an account that's never had a password — it's the
+account's *first* password-setup step, not just a reset.
+
+Clicking that email link brings the user back to the app with a
+`PASSWORD_RECOVERY` session (`authStore.ts` sets `passwordRecovery: true` on
+that specific event). `App.tsx` checks this before anything else and renders
+`SetNewPasswordPage` instead of the normal dashboard, so the user can't land
+in the app without actually setting a password first. Submitting there calls
+`supabase.auth.updateUser({ password })`, which clears the flag and lets
+normal routing resume.
+
+Signing up again with an email that's already registered correctly returns
+"User already registered" — that's not a bug, it means the account already
+exists (e.g. an admin created it). The UI now suggests "Forgot password?" in
+that specific case.
+
+Gotcha hit while wiring this up: `admin-create-employee` was originally
+deployed with `verify_jwt=true`. Supabase's platform-level `verify_jwt` check
+runs before the function code and rejects the browser's CORS preflight
+(`OPTIONS`, no `Authorization` header) with 401 — which blocks the real POST
+from ever being sent. Fixed by deploying with `verify_jwt=false` and doing
+auth verification manually inside the function (already done via
+`callerClient.auth.getUser()`), plus handling `OPTIONS`/CORS headers
+explicitly. See [Authorization headers](https://supabase.com/docs/guides/functions/auth-headers)
+in the Edge Functions docs.
+
 ## Seeding demo data
 
 ```bash

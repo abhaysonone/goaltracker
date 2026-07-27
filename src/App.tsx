@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useAuthStore } from './store/authStore'
 import { useDataStore } from './store/dataStore'
 import { LoginPage } from './pages/LoginPage'
+import { SetNewPasswordPage } from './pages/SetNewPasswordPage'
 import { AppLayout } from './components/layout/AppLayout'
 import { AdminDashboard } from './pages/admin/AdminDashboard'
 import { AdminGoals } from './pages/admin/AdminGoals'
@@ -30,6 +31,7 @@ function RequireRole({ role, children }: { role: 'admin' | 'employee'; children:
 export default function App() {
   const initialized = useAuthStore((s) => s.initialized)
   const currentUserId = useAuthStore((s) => s.currentUserId)
+  const passwordRecovery = useAuthStore((s) => s.passwordRecovery)
   const loaded = useDataStore((s) => s.loaded)
   const fetchAll = useDataStore((s) => s.fetchAll)
   const reset = useDataStore((s) => s.reset)
@@ -50,6 +52,12 @@ export default function App() {
         Loading…
       </div>
     )
+  }
+
+  // Takes priority over everything else: a recovery-link session shouldn't drop
+  // the user straight into the dashboard before they've actually set a password.
+  if (passwordRecovery) {
+    return <SetNewPasswordPage />
   }
 
   return (

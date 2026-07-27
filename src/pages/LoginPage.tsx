@@ -18,8 +18,9 @@ export function LoginPage() {
   const users = useMemo(() => allUsers.filter((u) => u.status === 'active'), [allUsers])
   const signIn = useAuthStore((s) => s.signIn)
   const signUp = useAuthStore((s) => s.signUp)
+  const requestPasswordReset = useAuthStore((s) => s.requestPasswordReset)
 
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin')
+  const [mode, setMode] = useState<'signin' | 'signup' | 'forgot'>('signin')
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -29,14 +30,16 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [confirmationSentTo, setConfirmationSentTo] = useState<string | null>(null)
+  const [resetSentTo, setResetSentTo] = useState<string | null>(null)
 
   const demoAdmins = users.filter((u) => u.role === 'admin')
   const demoEmployees = users.filter((u) => u.role === 'employee').slice(0, 4)
 
-  function switchMode(next: 'signin' | 'signup') {
+  function switchMode(next: 'signin' | 'signup' | 'forgot') {
     setMode(next)
     setError(null)
     setConfirmationSentTo(null)
+    setResetSentTo(null)
     setPassword('')
     setConfirmPassword('')
     setIsNewCompany(false)
@@ -68,12 +71,28 @@ export function LoginPage() {
       isNewCompany ? companyName.trim() : undefined,
     )
     setSubmitting(false)
-    if (signUpError) return setError(signUpError)
+    if (signUpError) {
+      return setError(
+        /already registered/i.test(signUpError)
+          ? `${signUpError} If an admin already set this account up for you, use "Forgot password?" to set your password instead.`
+          : signUpError,
+      )
+    }
     if (needsConfirmation) {
       setConfirmationSentTo(email)
     }
     // If confirmation isn't required, onAuthStateChange already picked up the new
     // session and App will redirect away from /login on its own.
+  }
+
+  async function handleForgotPassword() {
+    setError(null)
+    if (!email.trim()) return setError('Enter your email first.')
+    setSubmitting(true)
+    const { error: resetError } = await requestPasswordReset(email.trim())
+    setSubmitting(false)
+    if (resetError) return setError(resetError)
+    setResetSentTo(email.trim())
   }
 
   return (
@@ -105,13 +124,26 @@ export function LoginPage() {
                   Back to sign in
                 </Button>
               </div>
+            ) : resetSentTo ? (
+              <div className="space-y-4 text-center">
+                <p className="text-sm text-text-primary">
+                  We sent a password reset link to <span className="font-medium">{resetSentTo}</span>.
+                </p>
+                <p className="text-sm text-text-secondary">
+                  Click the link in that email to set your password, then sign in below.
+                </p>
+                <Button className="w-full" onClick={() => switchMode('signin')}>
+                  Back to sign in
+                </Button>
+              </div>
             ) : (
               <form
                 className="space-y-4"
                 onSubmit={(e) => {
                   e.preventDefault()
                   if (mode === 'signin') void handleSignIn(email, password)
-                  else void handleSignUp()
+                  else if (mode === 'signup') void handleSignUp()
+                  else void handleForgotPassword()
                 }}
               >
                 {mode === 'signup' && (
@@ -180,20 +212,22 @@ export function LoginPage() {
                     />
                   </div>
                 </div>
-                <div>
-                  <Label htmlFor="password">Password</Label>
-                  <div className="relative">
-                    <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-                    <Input
-                      id="password"
-                      type="password"
-                      placeholder="••••••••"
-                      className="pl-9"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                    />
+                {mode !== 'forgot' && (
+                  <div>
+                    <Label htmlFor="password">Password</Label>
+                    <div className="relative">
+                      <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                      <Input
+                        id="password"
+                        type="password"
+                        placeholder="••••••••"
+                        className="pl-9"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
                 {mode === 'signup' && (
                   <div>
                     <Label htmlFor="confirm-password">Confirm password</Label>
@@ -213,7 +247,11 @@ export function LoginPage() {
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-text-muted">Supabase Auth · email/password</span>
                   {mode === 'signin' && (
-                    <button type="button" className="text-accent-text hover:underline">
+                    <button
+                      type="button"
+                      className="text-accent-text hover:underline"
+                      onClick={() => switchMode('forgot')}
+                    >
                       Forgot password?
                     </button>
                   )}
@@ -225,11 +263,11 @@ export function LoginPage() {
                   disabled={
                     submitting ||
                     !email ||
-                    !password ||
+                    (mode !== 'forgot' && !password) ||
                     (mode === 'signup' && (!name || !confirmPassword || (isNewCompany && !companyName)))
                   }
                 >
-                  {mode === 'signin' ? 'Sign in' : 'Create account'}
+                  {mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Send reset link'}
                 </Button>
                 <p className="text-center text-xs text-text-muted">
                   {mode === 'signin' ? (
@@ -239,13 +277,17 @@ export function LoginPage() {
                         Sign up
                       </button>
                     </>
-                  ) : (
+                  ) : mode === 'signup' ? (
                     <>
                       Already have an account?{' '}
                       <button type="button" className="text-accent-text hover:underline" onClick={() => switchMode('signin')}>
                         Sign in
                       </button>
                     </>
+                  ) : (
+                    <button type="button" className="text-accent-text hover:underline" onClick={() => switchMode('signin')}>
+                      Back to sign in
+                    </button>
                   )}
                 </p>
               </form>
