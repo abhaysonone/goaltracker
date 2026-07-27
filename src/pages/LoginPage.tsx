@@ -7,15 +7,29 @@ import { Input, Label } from '../components/ui/Input'
 import { Avatar } from '../components/ui/Avatar'
 import { ThemeToggle } from '../components/layout/ThemeToggle'
 
+// Matches scripts/seed.mjs's default (overridable there via SEED_DEMO_PASSWORD) —
+// only works for accounts created by that script.
+const DEMO_PASSWORD = 'Demo-Password-123!'
+
 export function LoginPage() {
   const allUsers = useDataStore((s) => s.users)
   const users = useMemo(() => allUsers.filter((u) => u.status === 'active'), [allUsers])
-  const login = useAuthStore((s) => s.login)
+  const signIn = useAuthStore((s) => s.signIn)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
 
   const demoAdmins = users.filter((u) => u.role === 'admin')
   const demoEmployees = users.filter((u) => u.role === 'employee').slice(0, 4)
+
+  async function handleSignIn(signInEmail: string, signInPassword: string) {
+    setError(null)
+    setSubmitting(true)
+    const { error: signInError } = await signIn(signInEmail, signInPassword)
+    setSubmitting(false)
+    if (signInError) setError(signInError)
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-bg">
@@ -38,6 +52,7 @@ export function LoginPage() {
               className="space-y-4"
               onSubmit={(e) => {
                 e.preventDefault()
+                void handleSignIn(email, password)
               }}
             >
               <div>
@@ -74,7 +89,8 @@ export function LoginPage() {
                   Forgot password?
                 </button>
               </div>
-              <Button type="submit" className="w-full" disabled>
+              {error && <p className="text-xs text-danger-text">{error}</p>}
+              <Button type="submit" className="w-full" disabled={submitting || !email || !password}>
                 Sign in
               </Button>
             </form>
@@ -92,7 +108,7 @@ export function LoginPage() {
                   {demoAdmins.map((u) => (
                     <button
                       key={u.id}
-                      onClick={() => login(u.id)}
+                      onClick={() => void handleSignIn(u.email, DEMO_PASSWORD)}
                       className="flex w-full items-center gap-3 rounded-lg border border-border/15 px-3 py-2 text-left transition-colors hover:bg-bg-raised"
                     >
                       <Avatar name={u.name} color={u.avatarColor} size={28} />
@@ -110,7 +126,7 @@ export function LoginPage() {
                   {demoEmployees.map((u) => (
                     <button
                       key={u.id}
-                      onClick={() => login(u.id)}
+                      onClick={() => void handleSignIn(u.email, DEMO_PASSWORD)}
                       className="flex w-full items-center gap-3 rounded-lg border border-border/15 px-3 py-2 text-left transition-colors hover:bg-bg-raised"
                     >
                       <Avatar name={u.name} color={u.avatarColor} size={28} />

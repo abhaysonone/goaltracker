@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import type { ReactElement } from 'react'
+import { useEffect } from 'react'
 import { useAuthStore } from './store/authStore'
 import { useDataStore } from './store/dataStore'
 import { LoginPage } from './pages/LoginPage'
@@ -27,7 +28,29 @@ function RequireRole({ role, children }: { role: 'admin' | 'employee'; children:
 }
 
 export default function App() {
+  const initialized = useAuthStore((s) => s.initialized)
+  const currentUserId = useAuthStore((s) => s.currentUserId)
+  const loaded = useDataStore((s) => s.loaded)
+  const fetchAll = useDataStore((s) => s.fetchAll)
+  const reset = useDataStore((s) => s.reset)
   const user = useCurrentUser()
+
+  useEffect(() => {
+    if (!initialized) return
+    if (currentUserId) {
+      fetchAll().catch((err: unknown) => console.error('Failed to load data', err))
+    } else {
+      reset()
+    }
+  }, [initialized, currentUserId, fetchAll, reset])
+
+  if (!initialized || (currentUserId && !loaded)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-bg text-sm text-text-secondary">
+        Loading…
+      </div>
+    )
+  }
 
   return (
     <Routes>

@@ -22,9 +22,49 @@ these filenames.
 Ran `get_advisors` (security + performance) after applying everything —
 clean except for expected "unused index" info notices on empty tables.
 
+## Frontend integration
+
+`src/lib/supabaseClient.ts`, `src/store/authStore.ts`, and `src/store/dataStore.ts`
+are wired to the real project: auth uses `supabase.auth` sessions, and every
+CRUD action in the data store reads/writes the tables above (mutations refetch
+everything afterward rather than hand-computing derived state, since triggers
+do things like sync `goal_assignments` and create notifications server-side).
+`src/types/supabase.ts` holds the MCP-generated `Database` type; regenerate it
+with `generate_typescript_types` after any schema change.
+
+Creating a new employee account needs the Auth Admin API (service_role), which
+can't run in the browser — that goes through the `admin-create-employee` edge
+function (`supabase/functions/admin-create-employee/`) instead, deployed via
+MCP `deploy_edge_function`. It checks the caller is signed in and has
+`profiles.role = 'admin'` before creating the auth user and updating their
+profile.
+
+## Seeding demo data
+
+```bash
+cp .env.example .env.local   # already done; just fill in SUPABASE_SERVICE_ROLE_KEY
+npm run db:seed
+```
+
+`scripts/seed.mjs` needs `SUPABASE_SERVICE_ROLE_KEY` (Project Settings -> API
+-> service_role) to create real Auth users via the Admin API — this key never
+goes in frontend code and stays script-only. It creates the same 11 demo
+users / 10 goals / 22 assignments / 9 progress-update rows the old mock store
+shipped with, all sharing the password `Demo-Password-123!` (override via
+`SEED_DEMO_PASSWORD`). Safe to re-run — it looks up existing users/goals/
+assignments by natural key before inserting.
+
 ## What's not done yet
 
-The React app still runs entirely on the in-memory mock store
-(`src/store/dataStore.ts`) — it does not talk to Supabase yet. Swapping the
-Zustand store's mock CRUD actions for real Supabase queries (plus wiring
-Supabase Auth into the login screen) is a separate follow-up task.
+- **Bootstrapping the first admin.** Every signup defaults to `role =
+  'employee'` (RLS only lets admins change `profiles.role`), so the very
+  first admin has to be flipped manually via SQL — the seed script handles
+  this for the demo users, but a fresh non-seeded project needs it done by
+  hand once.
+- **Evidence file upload.** Nothing in the UI calls the
+  `certification-evidence` storage bucket yet — `EmployeeGoals.tsx`'s file
+  picker only stores a filename string, it doesn't actually upload.
+- **`due_soon` / `overdue` notifications.** The `goal_assigned` and
+  `goal_completed` notification types are trigger-generated as a side effect
+  of inserts; there's no scheduled job (e.g. `pg_cron`) yet to generate
+  `due_soon`/`overdue` notifications as due dates approach or pass.

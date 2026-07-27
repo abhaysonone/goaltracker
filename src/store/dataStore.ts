@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { supabase } from '../lib/supabaseClient'
 import type {
   AssignmentStatus,
   Goal,
@@ -9,25 +10,15 @@ import type {
   Role,
   User,
 } from '../types'
-import {
-  seedAssignments,
-  seedGoals,
-  seedNotifications,
-  seedProgressUpdates,
-  seedUsers,
-  TODAY,
-} from '../data/seed'
-
-let idCounter = 1000
-const nextId = (prefix: string) => `${prefix}-${idCounter++}`
+import type { Tables } from '../types/supabase'
 
 export function isPastDue(dueDate: string): boolean {
-  return new Date(dueDate) < TODAY
+  return new Date(dueDate) < new Date()
 }
 
 export function isDueSoon(dueDate: string, withinDays = 7): boolean {
   const due = new Date(dueDate)
-  const diffMs = due.getTime() - TODAY.getTime()
+  const diffMs = due.getTime() - Date.now()
   const diffDays = diffMs / (1000 * 60 * 60 * 24)
   return diffDays >= 0 && diffDays <= withinDays
 }
@@ -39,17 +30,91 @@ export function effectiveStatus(a: GoalAssignment): AssignmentStatus {
   return a.status
 }
 
+function mapUser(row: Tables<'profiles'>): User {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    role: row.role,
+    department: row.department,
+    managerId: row.manager_id,
+    status: row.status,
+    avatarColor: row.avatar_color,
+  }
+}
+
+function mapGoal(row: Tables<'goals'>): Goal {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    type: row.type,
+    category: row.category,
+    createdBy: row.created_by,
+    evidenceType: row.evidence_type,
+    createdAt: row.created_at,
+    archived: row.archived,
+  }
+}
+
+function mapAssignment(row: Tables<'goal_assignments'>): GoalAssignment {
+  return {
+    id: row.id,
+    goalId: row.goal_id,
+    employeeId: row.employee_id,
+    assignedBy: row.assigned_by,
+    assignedAt: row.assigned_at,
+    dueDate: row.due_date,
+    status: row.status,
+    priority: row.priority,
+    completionPct: row.completion_pct,
+  }
+}
+
+function mapProgressUpdate(row: Tables<'progress_updates'>): ProgressUpdate {
+  return {
+    id: row.id,
+    assignmentId: row.assignment_id,
+    updatedBy: row.updated_by,
+    status: row.status,
+    completionPct: row.completion_pct,
+    note: row.note,
+    evidenceUrl: row.evidence_url,
+    isOverride: row.is_override,
+    overrideReason: row.override_reason,
+    createdAt: row.created_at,
+  }
+}
+
+function mapNotification(row: Tables<'notifications'>): Notification {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    message: row.message,
+    readAt: row.read_at,
+    createdAt: row.created_at,
+  }
+}
+
 interface DataState {
   users: User[]
   goals: Goal[]
   assignments: GoalAssignment[]
   progressUpdates: ProgressUpdate[]
   notifications: Notification[]
+  loaded: boolean
+
+  // Loads/reloads everything from Supabase. Called once after login, and again
+  // after every mutation below so local state always reflects trigger-derived
+  // changes (assignment sync, auto-notifications) the client doesn't compute itself.
+  fetchAll: () => Promise<void>
+  reset: () => void
 
   // Goals (Admin)
-  createGoal: (goal: Omit<Goal, 'id' | 'createdAt' | 'archived'>) => Goal
-  updateGoal: (id: string, patch: Partial<Omit<Goal, 'id'>>) => void
-  archiveGoal: (id: string, archived: boolean) => void
+  createGoal: (goal: Omit<Goal, 'id' | 'createdAt' | 'archived'>) => Promise<void>
+  updateGoal: (id: string, patch: Partial<Omit<Goal, 'id'>>) => Promise<void>
+  archiveGoal: (id: string, archived: boolean) => Promise<void>
 
   // Assignments (Admin)
   assignGoal: (input: {
@@ -58,18 +123,18 @@ interface DataState {
     assignedBy: string
     dueDate: string
     priority: GoalPriority
-  }) => void
+  }) => Promise<void>
   overrideAssignmentStatus: (
     assignmentId: string,
     status: AssignmentStatus,
     reason: string,
     updatedBy: string,
-  ) => void
+  ) => Promise<void>
 
   // Employees (Admin)
-  addEmployee: (user: Omit<User, 'id' | 'status'>) => void
-  updateEmployee: (id: string, patch: Partial<Omit<User, 'id'>>) => void
-  toggleEmployeeStatus: (id: string) => void
+  addEmployee: (user: Omit<User, 'id' | 'status'>) => Promise<void>
+  updateEmployee: (id: string, patch: Partial<Omit<User, 'id'>>) => Promise<void>
+  toggleEmployeeStatus: (id: string) => Promise<void>
 
   // Progress (Employee)
   addProgressUpdate: (input: {
@@ -79,173 +144,190 @@ interface DataState {
     completionPct: number
     note: string
     evidenceUrl: string | null
-  }) => void
+  }) => Promise<void>
 
   // Notifications
-  markNotificationRead: (id: string) => void
-  markAllNotificationsRead: (userId: string) => void
+  markNotificationRead: (id: string) => Promise<void>
+  markAllNotificationsRead: (userId: string) => Promise<void>
 }
 
 export const useDataStore = create<DataState>((set, get) => ({
-  users: seedUsers,
-  goals: seedGoals,
-  assignments: seedAssignments,
-  progressUpdates: seedProgressUpdates,
-  notifications: seedNotifications,
+  users: [],
+  goals: [],
+  assignments: [],
+  progressUpdates: [],
+  notifications: [],
+  loaded: false,
 
-  createGoal: (goal) => {
-    const newGoal: Goal = {
-      ...goal,
-      id: nextId('g'),
-      createdAt: TODAY.toISOString().slice(0, 10),
-      archived: false,
+  fetchAll: async () => {
+    const [profilesRes, goalsRes, assignmentsRes, progressRes, notificationsRes] = await Promise.all([
+      supabase.from('profiles').select('*'),
+      supabase.from('goals').select('*').order('created_at', { ascending: false }),
+      supabase.from('goal_assignments').select('*'),
+      supabase.from('progress_updates').select('*').order('created_at', { ascending: false }),
+      supabase.from('notifications').select('*').order('created_at', { ascending: false }),
+    ])
+    for (const res of [profilesRes, goalsRes, assignmentsRes, progressRes, notificationsRes]) {
+      if (res.error) throw res.error
     }
-    set((s) => ({ goals: [newGoal, ...s.goals] }))
-    return newGoal
+    set({
+      users: (profilesRes.data ?? []).map(mapUser),
+      goals: (goalsRes.data ?? []).map(mapGoal),
+      assignments: (assignmentsRes.data ?? []).map(mapAssignment),
+      progressUpdates: (progressRes.data ?? []).map(mapProgressUpdate),
+      notifications: (notificationsRes.data ?? []).map(mapNotification),
+      loaded: true,
+    })
   },
 
-  updateGoal: (id, patch) => {
-    set((s) => ({
-      goals: s.goals.map((g) => (g.id === id ? { ...g, ...patch } : g)),
-    }))
+  reset: () => {
+    set({ users: [], goals: [], assignments: [], progressUpdates: [], notifications: [], loaded: false })
   },
 
-  archiveGoal: (id, archived) => {
-    set((s) => ({
-      goals: s.goals.map((g) => (g.id === id ? { ...g, archived } : g)),
-    }))
+  createGoal: async (goal) => {
+    const { error } = await supabase.from('goals').insert({
+      title: goal.title,
+      description: goal.description,
+      type: goal.type,
+      category: goal.category,
+      created_by: goal.createdBy,
+      evidence_type: goal.evidenceType,
+    })
+    if (error) throw error
+    await get().fetchAll()
   },
 
-  assignGoal: ({ goalId, employeeIds, assignedBy, dueDate, priority }) => {
-    const assignedAt = TODAY.toISOString().slice(0, 10)
-    const newAssignments: GoalAssignment[] = employeeIds.map((employeeId) => ({
-      id: nextId('a'),
-      goalId,
-      employeeId,
-      assignedBy,
-      assignedAt,
-      dueDate,
-      status: 'not_started',
-      priority,
-      completionPct: 0,
-    }))
-    const goal = get().goals.find((g) => g.id === goalId)
-    const newNotifications: Notification[] = employeeIds.map((employeeId) => ({
-      id: nextId('n'),
-      userId: employeeId,
-      type: 'goal_assigned',
-      message: `You were assigned a new goal: ${goal?.title ?? 'a new goal'}.`,
-      readAt: null,
-      createdAt: assignedAt,
-    }))
-    set((s) => ({
-      assignments: [...newAssignments, ...s.assignments],
-      notifications: [...newNotifications, ...s.notifications],
-    }))
+  updateGoal: async (id, patch) => {
+    const { error } = await supabase
+      .from('goals')
+      .update({
+        ...(patch.title !== undefined && { title: patch.title }),
+        ...(patch.description !== undefined && { description: patch.description }),
+        ...(patch.type !== undefined && { type: patch.type }),
+        ...(patch.category !== undefined && { category: patch.category }),
+        ...(patch.evidenceType !== undefined && { evidence_type: patch.evidenceType }),
+        ...(patch.archived !== undefined && { archived: patch.archived }),
+      })
+      .eq('id', id)
+    if (error) throw error
+    await get().fetchAll()
   },
 
-  overrideAssignmentStatus: (assignmentId, status, reason, updatedBy) => {
+  archiveGoal: async (id, archived) => {
+    const { error } = await supabase.from('goals').update({ archived }).eq('id', id)
+    if (error) throw error
+    await get().fetchAll()
+  },
+
+  assignGoal: async ({ goalId, employeeIds, assignedBy, dueDate, priority }) => {
+    const { error } = await supabase.from('goal_assignments').insert(
+      employeeIds.map((employeeId) => ({
+        goal_id: goalId,
+        employee_id: employeeId,
+        assigned_by: assignedBy,
+        due_date: dueDate,
+        priority,
+      })),
+    )
+    if (error) throw error
+    await get().fetchAll()
+  },
+
+  overrideAssignmentStatus: async (assignmentId, status, reason, updatedBy) => {
     const assignment = get().assignments.find((a) => a.id === assignmentId)
     if (!assignment) return
-    set((s) => ({
-      assignments: s.assignments.map((a) =>
-        a.id === assignmentId
-          ? { ...a, status, completionPct: status === 'completed' ? 100 : a.completionPct }
-          : a,
-      ),
-      progressUpdates: [
-        {
-          id: nextId('p'),
-          assignmentId,
-          updatedBy,
-          status,
-          completionPct: status === 'completed' ? 100 : assignment.completionPct,
-          note: 'Status manually overridden by admin.',
-          evidenceUrl: null,
-          isOverride: true,
-          overrideReason: reason,
-          createdAt: TODAY.toISOString().slice(0, 10),
-        },
-        ...s.progressUpdates,
-      ],
-    }))
+    // Insert-only: the sync_assignment_from_progress trigger derives the
+    // goal_assignments update and any completion notification from this row.
+    const { error } = await supabase.from('progress_updates').insert({
+      assignment_id: assignmentId,
+      updated_by: updatedBy,
+      status,
+      completion_pct: status === 'completed' ? 100 : assignment.completionPct,
+      note: 'Status manually overridden by admin.',
+      is_override: true,
+      override_reason: reason,
+    })
+    if (error) throw error
+    await get().fetchAll()
   },
 
-  addEmployee: (user) => {
-    const newUser: User = { ...user, id: nextId('u'), status: 'active' }
-    set((s) => ({ users: [...s.users, newUser] }))
+  addEmployee: async (user) => {
+    // Creating a login-capable account requires the Auth admin API (service_role),
+    // which can't run in the browser — this goes through the admin-create-employee
+    // edge function instead.
+    const { error } = await supabase.functions.invoke('admin-create-employee', {
+      body: {
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        department: user.department,
+        managerId: user.managerId,
+        avatarColor: user.avatarColor,
+      },
+    })
+    if (error) throw error
+    await get().fetchAll()
   },
 
-  updateEmployee: (id, patch) => {
-    set((s) => ({
-      users: s.users.map((u) => (u.id === id ? { ...u, ...patch } : u)),
-    }))
+  updateEmployee: async (id, patch) => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        ...(patch.name !== undefined && { name: patch.name }),
+        ...(patch.email !== undefined && { email: patch.email }),
+        ...(patch.role !== undefined && { role: patch.role }),
+        ...(patch.department !== undefined && { department: patch.department }),
+        ...(patch.managerId !== undefined && { manager_id: patch.managerId }),
+        ...(patch.status !== undefined && { status: patch.status }),
+        ...(patch.avatarColor !== undefined && { avatar_color: patch.avatarColor }),
+      })
+      .eq('id', id)
+    if (error) throw error
+    await get().fetchAll()
   },
 
-  toggleEmployeeStatus: (id) => {
-    set((s) => ({
-      users: s.users.map((u) =>
-        u.id === id ? { ...u, status: u.status === 'active' ? 'inactive' : 'active' } : u,
-      ),
-    }))
+  toggleEmployeeStatus: async (id) => {
+    const user = get().users.find((u) => u.id === id)
+    if (!user) return
+    const { error } = await supabase
+      .from('profiles')
+      .update({ status: user.status === 'active' ? 'inactive' : 'active' })
+      .eq('id', id)
+    if (error) throw error
+    await get().fetchAll()
   },
 
-  addProgressUpdate: ({ assignmentId, updatedBy, status, completionPct, note, evidenceUrl }) => {
-    const assignment = get().assignments.find((a) => a.id === assignmentId)
-    if (!assignment) return
-    const createdAt = TODAY.toISOString().slice(0, 10)
-    set((s) => ({
-      assignments: s.assignments.map((a) =>
-        a.id === assignmentId ? { ...a, status, completionPct } : a,
-      ),
-      progressUpdates: [
-        {
-          id: nextId('p'),
-          assignmentId,
-          updatedBy,
-          status,
-          completionPct,
-          note,
-          evidenceUrl,
-          isOverride: false,
-          overrideReason: null,
-          createdAt,
-        },
-        ...s.progressUpdates,
-      ],
-      notifications:
-        status === 'completed'
-          ? [
-              {
-                id: nextId('n'),
-                userId: assignment.assignedBy,
-                type: 'goal_completed',
-                message: `${s.users.find((u) => u.id === updatedBy)?.name ?? 'An employee'} marked a goal complete — review evidence.`,
-                readAt: null,
-                createdAt,
-              },
-              ...s.notifications,
-            ]
-          : s.notifications,
-    }))
+  addProgressUpdate: async ({ assignmentId, updatedBy, status, completionPct, note, evidenceUrl }) => {
+    const { error } = await supabase.from('progress_updates').insert({
+      assignment_id: assignmentId,
+      updated_by: updatedBy,
+      status,
+      completion_pct: completionPct,
+      note,
+      evidence_url: evidenceUrl,
+    })
+    if (error) throw error
+    await get().fetchAll()
   },
 
-  markNotificationRead: (id) => {
-    set((s) => ({
-      notifications: s.notifications.map((n) =>
-        n.id === id ? { ...n, readAt: n.readAt ?? TODAY.toISOString().slice(0, 10) } : n,
-      ),
-    }))
+  markNotificationRead: async (id) => {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('id', id)
+      .is('read_at', null)
+    if (error) throw error
+    await get().fetchAll()
   },
 
-  markAllNotificationsRead: (userId) => {
-    set((s) => ({
-      notifications: s.notifications.map((n) =>
-        n.userId === userId && !n.readAt
-          ? { ...n, readAt: TODAY.toISOString().slice(0, 10) }
-          : n,
-      ),
-    }))
+  markAllNotificationsRead: async (userId) => {
+    const { error } = await supabase
+      .from('notifications')
+      .update({ read_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .is('read_at', null)
+    if (error) throw error
+    await get().fetchAll()
   },
 }))
 

@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:seed": "node --env-file=.env.local scripts/seed.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.8",
     "clsx": "^2.1.1",
     "lucide-react": "^1.25.0",
     "react": "^18.3.1",
