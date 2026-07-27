@@ -5,6 +5,9 @@ interface AuthState {
   currentUserId: string | null
   initialized: boolean
   signIn: (email: string, password: string) => Promise<{ error: string | null }>
+  // Returns needsConfirmation: true when Supabase requires clicking an email link
+  // before a session is granted (signUp() then returns no session, error: null).
+  signUp: (email: string, password: string, name: string) => Promise<{ error: string | null; needsConfirmation: boolean }>
   logout: () => Promise<void>
 }
 
@@ -14,6 +17,18 @@ export const useAuthStore = create<AuthState>(() => ({
   signIn: async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     return { error: error?.message ?? null }
+  },
+  signUp: async (email, password, name) => {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { name },
+        emailRedirectTo: window.location.origin,
+      },
+    })
+    if (error) return { error: error.message, needsConfirmation: false }
+    return { error: null, needsConfirmation: !data.session }
   },
   logout: async () => {
     await supabase.auth.signOut()

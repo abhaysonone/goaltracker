@@ -39,6 +39,35 @@ MCP `deploy_edge_function`. It checks the caller is signed in and has
 `profiles.role = 'admin'` before creating the auth user and updating their
 profile.
 
+## Self-service signup
+
+`LoginPage.tsx` has a Sign up / Sign in toggle. New signups go through
+`supabase.auth.signUp()` (see `authStore.ts`), which — on hosted Supabase
+projects, confirmation is required by default — sends a confirmation email
+and returns no session until the user clicks the link. The UI reflects this:
+it shows a "check your email" screen instead of trying to log the user in
+immediately. `handle_new_user` still fires as soon as the (unconfirmed)
+`auth.users` row is created, so the `profiles` row exists right away, always
+with the safe defaults `role = 'employee'`, `department = 'Unassigned'` —
+signup input is never trusted for authorization, matching the existing
+admin-only `profiles.role`/`department` RLS policy.
+
+This is intentionally open: anyone with any email address can self-register
+as an employee. There's no domain allowlist. Add one (e.g. reject emails not
+ending in your company domain) if that's not what you want.
+
+Two things need verifying in the dashboard that no MCP tool here can check
+or set:
+- **Authentication -> Providers -> Email -> "Confirm email"** should be on
+  (this is the hosted-project default, and is what makes the flow above
+  meaningful — if it's off, `signUp()` returns a session immediately and the
+  "check your email" screen never shows).
+- **Authentication -> URL Configuration -> Redirect URLs** needs to include
+  wherever the app actually runs (`http://localhost:5173` for local dev, plus
+  any deployed URL later) — `emailRedirectTo` is set dynamically to
+  `window.location.origin`, but Supabase will only honor it if that origin is
+  on the allowlist.
+
 ## Seeding demo data
 
 ```bash
