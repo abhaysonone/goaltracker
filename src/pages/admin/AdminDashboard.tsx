@@ -91,7 +91,7 @@ export function AdminDashboard() {
     <div className="space-y-6">
       <div>
         {company && (
-          <p className="text-xs font-medium uppercase tracking-wide text-text-muted">{company.name}</p>
+          <p className="text-xs font-bold uppercase tracking-wide text-text-muted">{company.name}</p>
         )}
         <h1 className="text-xl font-semibold text-text-primary">Dashboard</h1>
         <p className="mt-0.5 text-sm text-text-secondary">Organization-wide goal &amp; certification progress</p>
